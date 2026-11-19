@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 
+// Helper to safely parse JSON
+function safeParseJson(val: any) {
+  if (!val) return null;
+  if (typeof val === "object") return val;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return null;
+  }
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -18,7 +29,7 @@ export async function PATCH(
 
     const updateData: any = {};
     if (model) updateData.model = model.trim();
-    if (description) updateData.description = description.trim();
+    if (description !== undefined) updateData.description = description.trim() || model?.trim() || "";
     if (brand) updateData.brand = brand.trim();
     if (listPrice !== undefined) updateData.listPrice = Number(listPrice);
     if (category) updateData.category = category;
@@ -33,7 +44,7 @@ export async function PATCH(
       success: true,
       data: {
         ...updated,
-        ioSpecs: updated.ioSpecs ? JSON.parse(updated.ioSpecs) : null,
+        ioSpecs: safeParseJson(updated.ioSpecs),
       },
     });
   } catch (error: any) {

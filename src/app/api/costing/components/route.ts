@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 
+// Helper to safely parse JSON
+function safeParseJson(val: any) {
+  if (!val) return null;
+  if (typeof val === "object") return val;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return null;
+  }
+}
+
 // GET /api/costing/components - List all catalog components
 export async function GET(request: Request) {
   try {
@@ -35,10 +46,10 @@ export async function GET(request: Request) {
       orderBy: [{ brand: "asc" }, { model: "asc" }],
     });
 
-    // Parse ioSpecs JSON string for client convenience
+    // Parse ioSpecs JSON string safely
     const formatted = components.map((c) => ({
       ...c,
-      ioSpecs: c.ioSpecs ? JSON.parse(c.ioSpecs) : null,
+      ioSpecs: safeParseJson(c.ioSpecs),
     }));
 
     return NextResponse.json({ success: true, data: formatted });
@@ -61,17 +72,28 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { model, description, brand, listPrice, category, ioSpecs } = body;
 
-    if (!model || !description || !brand) {
+    if (!model || !brand) {
       return NextResponse.json(
-        { success: false, error: "Model, description, and brand are required" },
+        { success: false, error: "Model code and brand are required" },
+        { status: 400 }
+      );
+    }
+
+    const trimmedModel = model.trim();
+    const existing = await db.componentCatalog.findUnique({
+      where: { model: trimmedModel },
+    });
+    if (existing) {
+      return NextResponse.json(
+        { success: false, error: `A component with model code "${trimmedModel}" already exists in the catalog.` },
         { status: 400 }
       );
     }
 
     const created = await db.componentCatalog.create({
       data: {
-        model: model.trim(),
-        description: description.trim(),
+        model: trimmedModel,
+        description: description?.trim() || trimmedModel,
         brand: brand.trim(),
         listPrice: Number(listPrice) || 0,
         category: category || "PLC",
@@ -83,7 +105,7 @@ export async function POST(request: Request) {
       success: true,
       data: {
         ...created,
-        ioSpecs: created.ioSpecs ? JSON.parse(created.ioSpecs) : null,
+        ioSpecs: safeParseJson(created.ioSpecs),
       },
     });
   } catch (error: any) {

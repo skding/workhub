@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 
+// Helper to safely parse JSON
+function safeParseJson(val: any) {
+  if (!val) return null;
+  if (typeof val === "object") return val;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -60,7 +71,7 @@ export async function GET(
         catalog: c.catalog
           ? {
               ...c.catalog,
-              ioSpecs: c.catalog.ioSpecs ? JSON.parse(c.catalog.ioSpecs) : null,
+              ioSpecs: safeParseJson(c.catalog.ioSpecs),
             }
           : null,
       })),

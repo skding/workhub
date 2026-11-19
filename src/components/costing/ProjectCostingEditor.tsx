@@ -671,7 +671,7 @@ export default function ProjectCostingEditor({
 
     try {
       setSaving(true);
-      await fetch(`/api/costing/versions/${selectedVersionId}/components`, {
+      const res = await fetch(`/api/costing/versions/${selectedVersionId}/components`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -682,11 +682,16 @@ export default function ProjectCostingEditor({
         }),
       });
 
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to add component to BOM");
+      }
+
       setSelectedCatalogId("");
       setComponentQty(1);
       fetchVersionDetail(selectedVersionId);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setFeedback({ type: "error", message: err.message || "Failed to add component to BOM" });
     } finally {
       setSaving(false);
     }
@@ -727,7 +732,7 @@ export default function ProjectCostingEditor({
     try {
       setSaving(true);
       const qty = calculateAutoQuantity(autoCalcFactors, autoCalcTargetSystemId || null);
-      await fetch(`/api/costing/versions/${selectedVersionId}/components`, {
+      const res = await fetch(`/api/costing/versions/${selectedVersionId}/components`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -738,6 +743,11 @@ export default function ProjectCostingEditor({
           systemId: autoCalcTargetSystemId || null,
         }),
       });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to add auto-calculated item");
+      }
 
       setIsAutoCalcModalOpen(false);
       setAutoCalcName("");

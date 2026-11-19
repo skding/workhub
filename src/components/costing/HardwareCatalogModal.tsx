@@ -88,6 +88,9 @@ export default function HardwareCatalogModal({
     HLI: 0,
   });
 
+  const [formError, setFormError] = useState<string | null>(null);
+  const [savingComp, setSavingComp] = useState(false);
+
   // Package Form states
   const [showAddPkg, setShowAddPkg] = useState(false);
   const [editingPkgId, setEditingPkgId] = useState<string | null>(null);
@@ -125,52 +128,68 @@ export default function HardwareCatalogModal({
 
   const handleSaveComponent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!model || !brand) return;
+    if (!model.trim() || !brand.trim()) {
+      setFormError("Model code and brand are required");
+      return;
+    }
+    setFormError(null);
 
     try {
+      setSavingComp(true);
       const ioSpecs = {
-        DI: ioDI,
-        DO: ioDO,
-        AI: ioAI,
-        AO: ioAO,
-        RTD: ioRTD,
-        HLI: ioHLI,
-        isAutoCalc,
-        ioFactors: isAutoCalc ? ioFactors : undefined,
+        DI: Number(ioDI) || 0,
+        DO: Number(ioDO) || 0,
+        AI: Number(ioAI) || 0,
+        AO: Number(ioAO) || 0,
+        RTD: Number(ioRTD) || 0,
+        HLI: Number(ioHLI) || 0,
+        isAutoCalc: Boolean(isAutoCalc),
+        ioFactors: isAutoCalc ? ioFactors : { DI: 0, DO: 0, AI: 0, AO: 0, RTD: 0, HLI: 0 },
       };
       const payload = {
         model: model.trim(),
         brand: brand.trim(),
-        description: description.trim(),
+        description: description.trim() || model.trim(),
         listPrice: Number(listPrice) || 0,
         category,
         ioSpecs,
       };
 
+      let res;
       if (editingId) {
-        await fetch(`/api/costing/components/${editingId}`, {
+        res = await fetch(`/api/costing/components/${editingId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       } else {
-        await fetch("/api/costing/components", {
+        res = await fetch("/api/costing/components", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       }
 
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setFormError(data.error || "Failed to save component");
+        return;
+      }
+
       setShowAddForm(false);
       setEditingId(null);
       resetForm();
+      setSelectedCategory("All");
       fetchData();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setFormError(err.message || "Failed to save component");
+    } finally {
+      setSavingComp(false);
     }
   };
 
   const handleStartEdit = (comp: CatalogComponent) => {
+    setFormError(null);
     setEditingId(comp.id);
     setModel(comp.model);
     setBrand(comp.brand);
@@ -199,6 +218,7 @@ export default function HardwareCatalogModal({
   };
 
   const resetForm = () => {
+    setFormError(null);
     setModel("");
     setBrand("");
     setDescription("");
@@ -431,10 +451,17 @@ export default function HardwareCatalogModal({
                 >
                   <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-bold text-cyan-400 uppercase tracking-wider">
                     <span>{editingId ? "Edit Component" : "Register New Component"}</span>
-                    <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-white">
+                    <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-white cursor-pointer">
                       Cancel
                     </button>
                   </div>
+
+                  {formError && (
+                    <div className="p-2.5 rounded-lg bg-rose-950/80 border border-rose-800 text-rose-300 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>{formError}</span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                     <div>
@@ -668,9 +695,10 @@ export default function HardwareCatalogModal({
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold"
+                      disabled={savingComp}
+                      className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
                     >
-                      {editingId ? "Save Changes" : "Create Component"}
+                      {savingComp ? "Saving..." : editingId ? "Save Changes" : "Create Component"}
                     </button>
                   </div>
                 </form>
