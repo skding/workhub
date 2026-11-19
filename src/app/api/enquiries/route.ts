@@ -81,6 +81,7 @@ export async function POST(request: Request) {
 
     let resolvedClientName = clientName;
     let resolvedClientId = clientId || null;
+    let resolvedClientCode = "";
 
     if (resolvedClientId) {
       const existingClient = await db.client.findUnique({
@@ -88,6 +89,7 @@ export async function POST(request: Request) {
       });
       if (existingClient) {
         resolvedClientName = existingClient.companyName;
+        resolvedClientCode = existingClient.clientCode || "";
       }
     } else if (clientName && clientName.trim()) {
       // Find or create client if not selected
@@ -96,9 +98,16 @@ export async function POST(request: Request) {
         where: { companyName: trimmed },
       });
       if (!found) {
+        const initials = trimmed
+          .split(/\s+/)
+          .map((w: string) => w[0]?.toUpperCase())
+          .filter(Boolean)
+          .join("")
+          .slice(0, 4);
         found = await db.client.create({
           data: {
             companyName: trimmed,
+            clientCode: `CL-${initials || "GEN"}`,
             contactPerson: contactPerson || null,
             contactPhone: contactPhone || null,
             contactEmail: contactEmail || null,
@@ -107,6 +116,7 @@ export async function POST(request: Request) {
       }
       resolvedClientId = found.id;
       resolvedClientName = found.companyName;
+      resolvedClientCode = found.clientCode || "";
     }
 
     if (!title || !resolvedClientName) {
@@ -132,10 +142,10 @@ export async function POST(request: Request) {
     const nextIndex = String(countThisMonth + 1).padStart(3, "0");
     const code = `${codePrefix}${nextIndex}`;
 
-    // Standardized OneDrive folder name format: YYYYMM-XXX_ClientName_ProjectTitle
-    const cleanClient = sanitizeForFolder(resolvedClientName).substring(0, 20);
+    // Standardized OneDrive folder name format: YYYYMM-XXX_ClientCode_ProjectTitle
+    const clientTag = sanitizeForFolder(resolvedClientCode || resolvedClientName).substring(0, 20);
     const cleanTitle = sanitizeForFolder(title).substring(0, 30);
-    const folderName = `${yearMonth}-${nextIndex}_${cleanClient}_${cleanTitle}`;
+    const folderName = `${yearMonth}-${nextIndex}_${clientTag}_${cleanTitle}`;
 
     // Auto-create folder in OneDrive storage (synced via Rclone/desktop)
     try {

@@ -88,11 +88,13 @@ export default function HardwareCatalogModal({
     HLI: 0,
   });
 
-  // Package Form
+  // Package Form states
   const [showAddPkg, setShowAddPkg] = useState(false);
+  const [editingPkgId, setEditingPkgId] = useState<string | null>(null);
   const [pkgName, setPkgName] = useState("");
   const [pkgDesc, setPkgDesc] = useState("");
-  const [pkgItems, setPkgItems] = useState<{ catalogId: string; quantity: number }[]>([]);
+  const [pkgItems, setPkgItems] = useState<{ catalogId: string; quantity: number; catalog?: CatalogComponent }[]>([]);
+  const [pkgSearchTerm, setPkgSearchTerm] = useState("");
 
   const categories = ["All", "PLC", "HMI", "NETWORK", "SCADA", "HARDWARE", "SITE", "ENGINEERING"];
 
@@ -220,6 +222,103 @@ export default function HardwareCatalogModal({
       c.description.toLowerCase().includes(search.toLowerCase());
     return matchesCat && matchesSearch;
   });
+
+  // Package Handlers
+  const handleStartEditPkg = (pkg: HardwarePackage) => {
+    setEditingPkgId(pkg.id);
+    setPkgName(pkg.name);
+    setPkgDesc(pkg.description || "");
+    setPkgItems(
+      pkg.items.map((i) => ({
+        catalogId: i.catalogId,
+        quantity: i.quantity,
+        catalog: i.catalog,
+      }))
+    );
+    setShowAddPkg(true);
+  };
+
+  const handleSavePackage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pkgName.trim()) return;
+    if (pkgItems.length === 0) {
+      alert("Please add at least one component to the package.");
+      return;
+    }
+
+    try {
+      const payload = {
+        name: pkgName.trim(),
+        description: pkgDesc.trim() || null,
+        items: pkgItems.map((i) => ({
+          catalogId: i.catalogId,
+          quantity: i.quantity,
+        })),
+      };
+
+      if (editingPkgId) {
+        await fetch(`/api/costing/packages/${editingPkgId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await fetch("/api/costing/packages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      setShowAddPkg(false);
+      setEditingPkgId(null);
+      setPkgName("");
+      setPkgDesc("");
+      setPkgItems([]);
+      fetchData();
+    } catch (err) {
+      console.error("Save Package Error:", err);
+    }
+  };
+
+  const handleDeletePkg = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete the package "${name}"?`)) return;
+    try {
+      await fetch(`/api/costing/packages/${id}`, { method: "DELETE" });
+      fetchData();
+    } catch (err) {
+      console.error("Delete Package Error:", err);
+    }
+  };
+
+  const addComponentToPkg = (comp: CatalogComponent) => {
+    const existing = pkgItems.find((i) => i.catalogId === comp.id);
+    if (existing) {
+      setPkgItems(
+        pkgItems.map((i) =>
+          i.catalogId === comp.id ? { ...i, quantity: i.quantity + 1 } : i
+        )
+      );
+    } else {
+      setPkgItems([...pkgItems, { catalogId: comp.id, quantity: 1, catalog: comp }]);
+    }
+  };
+
+  const updatePkgItemQty = (catalogId: string, quantity: number) => {
+    if (quantity <= 0) {
+      setPkgItems(pkgItems.filter((i) => i.catalogId !== catalogId));
+    } else {
+      setPkgItems(
+        pkgItems.map((i) =>
+          i.catalogId === catalogId ? { ...i, quantity } : i
+        )
+      );
+    }
+  };
+
+  const removePkgItem = (catalogId: string) => {
+    setPkgItems(pkgItems.filter((i) => i.catalogId !== catalogId));
+  };
 
   if (!isOpen) return null;
 
@@ -714,12 +813,235 @@ export default function HardwareCatalogModal({
           ) : (
             /* PACKAGES TAB */
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs text-slate-400 font-mono">
                   Standard automation kits for 1-click insertion into project BOMs
                 </span>
+                <button
+                  onClick={() => {
+                    setEditingPkgId(null);
+                    setPkgName("");
+                    setPkgDesc("");
+                    setPkgItems([]);
+                    setShowAddPkg(!showAddPkg);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{showAddPkg ? "Close Package Editor" : "Create Package"}</span>
+                </button>
               </div>
 
+              {/* Package Add / Edit Form */}
+              {showAddPkg && (
+                <form
+                  onSubmit={handleSavePackage}
+                  className="p-5 rounded-2xl bg-slate-900 border border-indigo-700/60 shadow-xl space-y-4 animate-in fade-in duration-200"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-indigo-950 border border-indigo-800 text-indigo-400">
+                        <Boxes className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">
+                          {editingPkgId ? "Edit 1-Click Package" : "Create 1-Click Package"}
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Bundle multiple components together for fast 1-click addition to project BOMs
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddPkg(false);
+                        setEditingPkgId(null);
+                      }}
+                      className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    {/* Left Side: Package details and selected contents */}
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                          Package Name *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. S7-1200 Compact Automation Starter Kit"
+                          value={pkgName}
+                          onChange={(e) => setPkgName(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                          Description
+                        </label>
+                        <textarea
+                          placeholder="e.g. Standard control kit includes PLC, 7-inch touch panel, power supply, and Ethernet switch"
+                          value={pkgDesc}
+                          onChange={(e) => setPkgDesc(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white h-20 resize-none"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-[11px] font-semibold text-slate-300">
+                            Package Contents ({pkgItems.length} items)
+                          </label>
+                          {pkgItems.length > 0 && (
+                            <span className="text-xs font-mono font-bold text-cyan-300">
+                              Total: RM{" "}
+                              {formatNumber(
+                                pkgItems.reduce(
+                                  (acc, i) => acc + (i.catalog?.listPrice || 0) * i.quantity,
+                                  0
+                                )
+                              )}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                          {pkgItems.map((item) => (
+                            <div
+                              key={item.catalogId}
+                              className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3 text-xs"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-white font-mono truncate">
+                                  {item.catalog?.model}
+                                </div>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                  [{item.catalog?.brand}] {item.catalog?.description}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center bg-slate-900 border border-slate-700 rounded-lg">
+                                  <button
+                                    type="button"
+                                    onClick={() => updatePkgItemQty(item.catalogId, item.quantity - 1)}
+                                    className="px-2 py-0.5 text-slate-400 hover:text-white font-bold cursor-pointer"
+                                  >
+                                    -
+                                  </button>
+                                  <span className="w-7 text-center font-mono font-bold text-white text-xs">
+                                    {item.quantity}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => updatePkgItemQty(item.catalogId, item.quantity + 1)}
+                                    className="px-2 py-0.5 text-slate-400 hover:text-white font-bold cursor-pointer"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removePkgItem(item.catalogId)}
+                                  className="p-1 rounded text-slate-500 hover:text-rose-400 transition cursor-pointer"
+                                  title="Remove item"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {pkgItems.length === 0 && (
+                            <div className="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                              No components in this package yet. Pick items from the right panel!
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Side: Component Selector */}
+                    <div className="space-y-3 flex flex-col">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                          Select Components to Add
+                        </label>
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                          <input
+                            type="text"
+                            placeholder="Search by model, brand, or description..."
+                            value={pkgSearchTerm}
+                            onChange={(e) => setPkgSearchTerm(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex-1 max-h-[280px] overflow-y-auto space-y-1.5 pr-1">
+                        {components
+                          .filter(
+                            (c) =>
+                              c.model.toLowerCase().includes(pkgSearchTerm.toLowerCase()) ||
+                              c.brand.toLowerCase().includes(pkgSearchTerm.toLowerCase()) ||
+                              c.description.toLowerCase().includes(pkgSearchTerm.toLowerCase())
+                          )
+                          .map((comp) => (
+                            <div
+                              key={comp.id}
+                              onClick={() => addComponentToPkg(comp)}
+                              className="p-2 rounded-xl bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-600/50 flex items-center justify-between gap-2 cursor-pointer transition text-xs"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-white font-mono truncate">
+                                  {comp.model}
+                                </div>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                  [{comp.brand}] {comp.description}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-[11px] text-cyan-400">
+                                  RM {formatNumber(comp.listPrice)}
+                                </span>
+                                <Plus className="w-4 h-4 text-indigo-400" />
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+
+                      <div className="pt-2 flex justify-end gap-2 border-t border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAddPkg(false);
+                            setEditingPkgId(null);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={pkgItems.length === 0}
+                          className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition cursor-pointer"
+                        >
+                          {editingPkgId ? "Update Package" : "Save Package"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {/* Package Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {packages.map((pkg) => {
                   const pkgTotal = pkg.items.reduce(
@@ -730,13 +1052,36 @@ export default function HardwareCatalogModal({
                   return (
                     <div
                       key={pkg.id}
-                      className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3 shadow"
+                      className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3 shadow group hover:border-indigo-800/60 transition"
                     >
                       <div className="flex items-center justify-between">
-                        <div className="font-bold text-sm text-cyan-300">{pkg.name}</div>
-                        <span className="text-xs font-mono font-bold text-white">
-                          RM {formatNumber(pkgTotal)}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-indigo-950/80 border border-indigo-800/60 text-indigo-400">
+                            <Boxes className="w-4 h-4" />
+                          </div>
+                          <div className="font-bold text-sm text-cyan-300">{pkg.name}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-white">
+                            RM {formatNumber(pkgTotal)}
+                          </span>
+                          <div className="flex items-center gap-1 ml-2">
+                            <button
+                              onClick={() => handleStartEditPkg(pkg)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                              title="Edit package"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePkg(pkg.id, pkg.name)}
+                              className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 transition cursor-pointer"
+                              title="Delete package"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
                       </div>
 
                       {pkg.description && (
@@ -758,6 +1103,12 @@ export default function HardwareCatalogModal({
                     </div>
                   );
                 })}
+
+                {packages.length === 0 && !loading && (
+                  <div className="col-span-2 py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-2xl">
+                    No 1-click packages created yet. Click &quot;Create Package&quot; to build a hardware bundle!
+                  </div>
+                )}
               </div>
             </div>
           )}
