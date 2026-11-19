@@ -23,7 +23,8 @@ import {
   Shield,
   HelpCircle,
   ArrowRight,
-  Edit2
+  Edit2,
+  X
 } from "lucide-react";
 import { formatNumber } from "@/lib/format";
 import * as XLSX from "xlsx";
@@ -154,6 +155,27 @@ export default function ProjectCostingEditor({
   const [selectedTargetSystemId, setSelectedTargetSystemId] = useState("");
   const [selectedTargetSectionId, setSelectedTargetSectionId] = useState("");
   const [componentQty, setComponentQty] = useState(1);
+
+  // Custom Auto-Calc Item Modal state
+  const [isAutoCalcModalOpen, setIsAutoCalcModalOpen] = useState(false);
+  const [autoCalcName, setAutoCalcName] = useState("");
+  const [autoCalcPrice, setAutoCalcPrice] = useState(0);
+  const [autoCalcTargetSystemId, setAutoCalcTargetSystemId] = useState("");
+  const [autoCalcFactors, setAutoCalcFactors] = useState<{
+    DI: number;
+    DO: number;
+    AI: number;
+    AO: number;
+    RTD: number;
+    HLI: number;
+  }>({
+    DI: 0,
+    DO: 1,
+    AI: 0,
+    AO: 0,
+    RTD: 0,
+    HLI: 0,
+  });
 
   // Settings state
   const [markupVal, setMarkupVal] = useState(1.25);
@@ -346,6 +368,53 @@ export default function ProjectCostingEditor({
   };
 
   const totals = calculateTotals();
+
+  // Helper to calculate total IO in a target scope (whole project, specific system, or specific section)
+  const getTargetIO = (targetSystemId?: string | null, targetSectionId?: string | null) => {
+    const ioTotals: Record<string, number> = { DI: 0, DO: 0, AI: 0, AO: 0, RTD: 0, HLI: 0 };
+    if (!currentVersion) return ioTotals;
+
+    currentVersion.systems.forEach((sys) => {
+      if (targetSystemId && sys.id !== targetSystemId) return;
+
+      sys.sections.forEach((sec) => {
+        if (targetSectionId && sec.id !== targetSectionId) return;
+
+        (sec.ioRequirements || []).forEach((req) => {
+          if (req.ioType in ioTotals) {
+            ioTotals[req.ioType] += Number(req.quantity) || 0;
+          }
+        });
+
+        (sec.equipment || []).forEach((eq) => {
+          const eqQty = Number(eq.quantity) || 1;
+          (eq.io || []).forEach((point) => {
+            if (point.ioType in ioTotals) {
+              ioTotals[point.ioType] += (Number(point.quantity) || 0) * eqQty;
+            }
+          });
+        });
+      });
+    });
+
+    return ioTotals;
+  };
+
+  const calculateAutoQuantity = (
+    factors: { DI?: number; DO?: number; AI?: number; AO?: number; RTD?: number; HLI?: number },
+    targetSystemId?: string | null,
+    targetSectionId?: string | null
+  ) => {
+    const io = getTargetIO(targetSystemId, targetSectionId);
+    const sum =
+      (Number(factors.DI) || 0) * (io.DI || 0) +
+      (Number(factors.DO) || 0) * (io.DO || 0) +
+      (Number(factors.AI) || 0) * (io.AI || 0) +
+      (Number(factors.AO) || 0) * (io.AO || 0) +
+      (Number(factors.RTD) || 0) * (io.RTD || 0) +
+      (Number(factors.HLI) || 0) * (io.HLI || 0);
+    return sum > 0 ? Math.ceil(sum) : 1;
+  };
 
   // CLONE VERSION (Rev 1 -> Rev 2)
   const handleCloneVersion = async () => {
@@ -618,6 +687,68 @@ export default function ProjectCostingEditor({
       fetchVersionDetail(selectedVersionId);
     } catch (err) {
       console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRecalculateBOMComponent = async (c: ComponentItem) => {
+    if (!c.catalog?.ioSpecs?.ioFactors || !selectedVersionId) return;
+
+    const newQty = calculateAutoQuantity(
+      c.catalog.ioSpecs.ioFactors,
+      c.systemId || null,
+      c.sectionId || null
+    );
+
+    try {
+      setSaving(true);
+      await fetch(`/api/costing/components-bom/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantity: newQty }),
+      });
+
+      setFeedback({
+        type: "success",
+        message: `Updated ${c.catalog.model || c.componentName} quantity to ${newQty} pcs based on current I/O!`,
+      });
+      fetchVersionDetail(selectedVersionId);
+    } catch (err: any) {
+      setFeedback({ type: "error", message: err.message || "Failed to recalculate quantity" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddCustomAutoCalcItem = async () => {
+    if (!selectedVersionId || !autoCalcName.trim()) return;
+
+    try {
+      setSaving(true);
+      const qty = calculateAutoQuantity(autoCalcFactors, autoCalcTargetSystemId || null);
+      await fetch(`/api/costing/versions/${selectedVersionId}/components`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          componentName: autoCalcName.trim(),
+          snapshottedPrice: Number(autoCalcPrice) || 0,
+          quantity: qty,
+          category: "HARDWARE",
+          systemId: autoCalcTargetSystemId || null,
+        }),
+      });
+
+      setIsAutoCalcModalOpen(false);
+      setAutoCalcName("");
+      setAutoCalcPrice(0);
+      setFeedback({
+        type: "success",
+        message: `Added "${autoCalcName.trim()}" with auto-calculated quantity of ${qty} pcs!`,
+      });
+      fetchVersionDetail(selectedVersionId);
+    } catch (err: any) {
+      setFeedback({ type: "error", message: err.message || "Failed to add auto-calc item" });
     } finally {
       setSaving(false);
     }
@@ -1133,24 +1264,36 @@ export default function ProjectCostingEditor({
         <div className="space-y-4">
           {/* Add Component Drawer */}
           <div className="p-4 rounded-2xl bg-slate-900 border border-cyan-800/50 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Plus className="w-4 h-4" /> Add Component from Master Catalog
               </span>
-              {packages.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-slate-400">1-Click Kits:</span>
-                  {packages.map((pkg) => (
-                    <button
-                      key={pkg.id}
-                      onClick={() => handleInsertPackage(pkg)}
-                      className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-[10px] font-semibold text-indigo-300 transition cursor-pointer"
-                    >
-                      + {pkg.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setAutoCalcTargetSystemId(selectedTargetSystemId);
+                    setIsAutoCalcModalOpen(true);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-700/60 text-[10px] font-semibold text-amber-300 transition cursor-pointer flex items-center gap-1"
+                >
+                  <Zap className="w-3 h-3 text-amber-400" />
+                  <span>+ Auto-Calc Item</span>
+                </button>
+                {packages.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">1-Click Kits:</span>
+                    {packages.map((pkg) => (
+                      <button
+                        key={pkg.id}
+                        onClick={() => handleInsertPackage(pkg)}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-[10px] font-semibold text-indigo-300 transition cursor-pointer"
+                      >
+                        + {pkg.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1160,13 +1303,28 @@ export default function ProjectCostingEditor({
                 </label>
                 <select
                   value={selectedCatalogId}
-                  onChange={(e) => setSelectedCatalogId(e.target.value)}
+                  onChange={(e) => {
+                    const catId = e.target.value;
+                    setSelectedCatalogId(catId);
+                    const found = catalogItems.find((c) => c.id === catId);
+                    if (found?.ioSpecs?.isAutoCalc && found?.ioSpecs?.ioFactors) {
+                      const autoQty = calculateAutoQuantity(
+                        found.ioSpecs.ioFactors,
+                        selectedTargetSystemId,
+                        selectedTargetSectionId
+                      );
+                      setComponentQty(autoQty);
+                    } else {
+                      setComponentQty(1);
+                    }
+                  }}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
                 >
                   <option value="">-- Choose Model from Catalog --</option>
                   {catalogItems.map((c) => (
                     <option key={c.id} value={c.id}>
                       [{c.brand}] {c.model} - {c.description} (RM {formatNumber(c.listPrice)})
+                      {c.ioSpecs?.isAutoCalc ? " ⚡ [Auto-Calc]" : ""}
                     </option>
                   ))}
                 </select>
@@ -1179,8 +1337,14 @@ export default function ProjectCostingEditor({
                 <select
                   value={selectedTargetSystemId}
                   onChange={(e) => {
-                    setSelectedTargetSystemId(e.target.value);
+                    const sysId = e.target.value;
+                    setSelectedTargetSystemId(sysId);
                     setSelectedTargetSectionId("");
+                    const found = catalogItems.find((c) => c.id === selectedCatalogId);
+                    if (found?.ioSpecs?.isAutoCalc && found?.ioSpecs?.ioFactors) {
+                      const autoQty = calculateAutoQuantity(found.ioSpecs.ioFactors, sysId, null);
+                      setComponentQty(autoQty);
+                    }
                   }}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
                 >
@@ -1194,8 +1358,15 @@ export default function ProjectCostingEditor({
               </div>
 
               <div className="flex items-end gap-2">
-                <div className="w-20">
-                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Qty</label>
+                <div className="w-24">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-semibold text-slate-400">Qty</label>
+                    {selectedCatalogId && catalogItems.find((c) => c.id === selectedCatalogId)?.ioSpecs?.isAutoCalc && (
+                      <span className="text-[9px] text-amber-400 font-mono flex items-center gap-0.5">
+                        <Zap className="w-2.5 h-2.5" /> Auto
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="number"
                     min={1}
@@ -1236,8 +1407,18 @@ export default function ProjectCostingEditor({
                   return (
                     <tr key={c.id} className="hover:bg-slate-900/40 transition">
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-white">
-                          {c.catalog?.model || c.componentName}
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white">
+                            {c.catalog?.model || c.componentName}
+                          </span>
+                          {c.catalog?.ioSpecs?.isAutoCalc && (
+                            <span
+                              className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800 text-amber-300 text-[10px] flex items-center gap-0.5 font-semibold"
+                              title="Auto-calculated from I/O factors"
+                            >
+                              <Zap className="w-2.5 h-2.5 text-amber-400" /> Auto
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-400 truncate max-w-[320px]">
                           {c.componentName || c.catalog?.description}
@@ -1255,7 +1436,18 @@ export default function ProjectCostingEditor({
                       </td>
 
                       <td className="py-3 px-4 text-center font-mono font-bold text-white">
-                        {c.quantity}
+                        <div className="flex items-center justify-center gap-1.5">
+                          <span>{c.quantity}</span>
+                          {c.catalog?.ioSpecs?.isAutoCalc && c.catalog?.ioSpecs?.ioFactors && (
+                            <button
+                              onClick={() => handleRecalculateBOMComponent(c)}
+                              className="p-1 rounded hover:bg-amber-950 text-slate-500 hover:text-amber-300 transition cursor-pointer"
+                              title="Recalculate quantity based on current I/O"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-3 px-4 text-right font-mono">
@@ -1392,6 +1584,198 @@ export default function ProjectCostingEditor({
             >
               {saving ? "Saving Rates..." : "Apply & Save Rates"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM AUTO-CALC ITEM MODAL */}
+      {isAutoCalcModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div
+            className="bg-slate-900 border border-amber-800/60 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-amber-950 border border-amber-800 text-amber-400">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Add Auto-Calculated BOM Item</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Quantity automatically derives from project I/O counts
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAutoCalcModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  Component Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Interposing Relay 24VDC 1CO"
+                  value={autoCalcName}
+                  onChange={(e) => setAutoCalcName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Unit List Price (RM) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="35.00"
+                    value={autoCalcPrice || ""}
+                    onChange={(e) => setAutoCalcPrice(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Scope / Target System
+                  </label>
+                  <select
+                    value={autoCalcTargetSystemId}
+                    onChange={(e) => setAutoCalcTargetSystemId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="">Whole Project (Global)</option>
+                    {currentVersion?.systems.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Presets */}
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-mono uppercase text-slate-400">Presets:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!autoCalcName) setAutoCalcName("Interposing Relay 24VDC (1×DO)");
+                      setAutoCalcFactors({ DI: 0, DO: 1, AI: 0, AO: 0, RTD: 0, HLI: 0 });
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 cursor-pointer"
+                  >
+                    Relays (1×DO)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!autoCalcName) setAutoCalcName("Signal Isolator 4-20mA (1×AI)");
+                      setAutoCalcFactors({ DI: 0, DO: 0, AI: 1, AO: 0, RTD: 0, HLI: 0 });
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 cursor-pointer"
+                  >
+                    Isolators (1×AI)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!autoCalcName) setAutoCalcName("Terminal Block Set (2xDI/DO + 3xAnalog)");
+                      setAutoCalcFactors({ DI: 2, DO: 2, AI: 3, AO: 3, RTD: 3, HLI: 0 });
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 cursor-pointer"
+                  >
+                    Terminals (2xDI/DO, 3xAnalog)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAutoCalcFactors({ DI: 1, DO: 1, AI: 1, AO: 1, RTD: 1, HLI: 1 })}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 cursor-pointer"
+                  >
+                    1× Each I/O
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-6 gap-2 pt-1">
+                  {(["DI", "DO", "AI", "AO", "RTD", "HLI"] as const).map((io) => (
+                    <div key={io}>
+                      <label className="block text-[10px] text-center text-slate-400 font-mono">
+                        {io} Factor
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={autoCalcFactors[io]}
+                        onChange={(e) =>
+                          setAutoCalcFactors({
+                            ...autoCalcFactors,
+                            [io]: parseFloat(e.target.value) || 0,
+                          })
+                        }
+                        className="w-full bg-slate-900 border border-slate-700 rounded text-center text-xs text-amber-300 font-mono py-1"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Calculation Preview */}
+              {(() => {
+                const calcQty = calculateAutoQuantity(autoCalcFactors, autoCalcTargetSystemId || null);
+                const calcTotal = calcQty * (Number(autoCalcPrice) || 0);
+                return (
+                  <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-800/40 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-mono uppercase text-slate-400 block">
+                        Computed Quantity
+                      </span>
+                      <span className="text-base font-bold text-amber-300 font-mono">
+                        {calcQty} pcs
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] font-mono uppercase text-slate-400 block">
+                        Line Total
+                      </span>
+                      <span className="text-base font-bold text-white font-mono">
+                        RM {formatNumber(calcTotal)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsAutoCalcModalOpen(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddCustomAutoCalcItem}
+                disabled={!autoCalcName.trim() || saving}
+                className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-semibold text-xs transition flex items-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add to BOM</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

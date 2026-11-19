@@ -14,7 +14,9 @@ import {
   AlertCircle,
   Tag,
   Boxes,
-  DollarSign
+  DollarSign,
+  Zap,
+  RotateCcw
 } from "lucide-react";
 import { formatNumber } from "@/lib/format";
 
@@ -75,6 +77,17 @@ export default function HardwareCatalogModal({
   const [ioRTD, setIoRTD] = useState(0);
   const [ioHLI, setIoHLI] = useState(0);
 
+  // Auto-calculation factors
+  const [isAutoCalc, setIsAutoCalc] = useState(false);
+  const [ioFactors, setIoFactors] = useState<{ DI: number; DO: number; AI: number; AO: number; RTD: number; HLI: number }>({
+    DI: 0,
+    DO: 0,
+    AI: 0,
+    AO: 0,
+    RTD: 0,
+    HLI: 0,
+  });
+
   // Package Form
   const [showAddPkg, setShowAddPkg] = useState(false);
   const [pkgName, setPkgName] = useState("");
@@ -113,7 +126,16 @@ export default function HardwareCatalogModal({
     if (!model || !brand) return;
 
     try {
-      const ioSpecs = { DI: ioDI, DO: ioDO, AI: ioAI, AO: ioAO, RTD: ioRTD, HLI: ioHLI };
+      const ioSpecs = {
+        DI: ioDI,
+        DO: ioDO,
+        AI: ioAI,
+        AO: ioAO,
+        RTD: ioRTD,
+        HLI: ioHLI,
+        isAutoCalc,
+        ioFactors: isAutoCalc ? ioFactors : undefined,
+      };
       const payload = {
         model: model.trim(),
         brand: brand.trim(),
@@ -159,6 +181,8 @@ export default function HardwareCatalogModal({
     setIoAO(comp.ioSpecs?.AO || 0);
     setIoRTD(comp.ioSpecs?.RTD || 0);
     setIoHLI(comp.ioSpecs?.HLI || 0);
+    setIsAutoCalc(Boolean(comp.ioSpecs?.isAutoCalc));
+    setIoFactors(comp.ioSpecs?.ioFactors || { DI: 0, DO: 0, AI: 0, AO: 0, RTD: 0, HLI: 0 });
     setShowAddForm(true);
   };
 
@@ -184,6 +208,8 @@ export default function HardwareCatalogModal({
     setIoAO(0);
     setIoRTD(0);
     setIoHLI(0);
+    setIsAutoCalc(false);
+    setIoFactors({ DI: 0, DO: 0, AI: 0, AO: 0, RTD: 0, HLI: 0 });
   };
 
   const filteredComponents = components.filter((c) => {
@@ -443,6 +469,94 @@ export default function HardwareCatalogModal({
                         </div>
                       </div>
                     </div>
+
+                    {/* Automatic Quantity Calculation (I/O Factor Formula) */}
+                    <div className="sm:col-span-2 lg:col-span-4 p-3 rounded-xl bg-amber-950/20 border border-amber-800/40 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-amber-300 flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isAutoCalc}
+                            onChange={(e) => setIsAutoCalc(e.target.checked)}
+                            className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 cursor-pointer accent-amber-500"
+                          />
+                          <Zap className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Automatic Quantity Calculation (I/O Factor Formula)</span>
+                        </label>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        When added to a project BOM, initial quantity will automatically compute: 
+                        <span className="font-mono font-bold text-amber-300 ml-1">Total Qty = Σ (Factor × Respective I/O)</span>.
+                      </p>
+
+                      {isAutoCalc && (
+                        <div className="space-y-3 pt-1">
+                          {/* Presets */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-mono uppercase text-slate-400">Presets:</span>
+                            <button
+                              type="button"
+                              onClick={() => setIoFactors({ DI: 0, DO: 1, AI: 0, AO: 0, RTD: 0, HLI: 0 })}
+                              className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 transition cursor-pointer"
+                            >
+                              Relays (1×DO)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIoFactors({ DI: 0, DO: 0, AI: 1, AO: 0, RTD: 0, HLI: 0 })}
+                              className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 transition cursor-pointer"
+                            >
+                              Isolators (1×AI)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIoFactors({ DI: 2, DO: 2, AI: 3, AO: 3, RTD: 3, HLI: 0 })}
+                              className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 transition cursor-pointer"
+                            >
+                              Terminals (2×Digital, 3×Analog)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIoFactors({ DI: 1, DO: 1, AI: 1, AO: 1, RTD: 1, HLI: 1 })}
+                              className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-amber-500 text-[10px] font-semibold text-slate-200 transition cursor-pointer"
+                            >
+                              1× Each I/O
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIoFactors({ DI: 0, DO: 0, AI: 0, AO: 0, RTD: 0, HLI: 0 })}
+                              className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:border-rose-500 text-[10px] text-slate-400 hover:text-rose-400 transition cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          </div>
+
+                          {/* 6 Factor Inputs */}
+                          <div className="grid grid-cols-6 gap-2">
+                            {(["DI", "DO", "AI", "AO", "RTD", "HLI"] as const).map((io) => (
+                              <div key={io}>
+                                <label className="block text-[10px] text-center text-amber-400/80 font-mono">
+                                  {io} Factor
+                                </label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  value={ioFactors[io] ?? 0}
+                                  onChange={(e) =>
+                                    setIoFactors({
+                                      ...ioFactors,
+                                      [io]: parseFloat(e.target.value) || 0,
+                                    })
+                                  }
+                                  className="w-full bg-slate-950 border border-amber-800/50 rounded text-center text-xs text-amber-300 font-mono py-1 focus:outline-none focus:border-amber-400"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
@@ -538,7 +652,24 @@ export default function HardwareCatalogModal({
                                   </span>
                                 )}
                               </div>
-                            ) : (
+                            ) : null}
+
+                            {comp.ioSpecs?.isAutoCalc && comp.ioSpecs?.ioFactors ? (
+                              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/60 text-amber-300 text-[10px] flex items-center gap-0.5 font-semibold">
+                                  <Zap className="w-2.5 h-2.5 text-amber-400" />
+                                  Auto-Calc
+                                </span>
+                                <span className="text-[10px] text-amber-200/70 font-mono">
+                                  {Object.entries(comp.ioSpecs.ioFactors as Record<string, number>)
+                                    .filter(([_, factor]) => Number(factor) > 0)
+                                    .map(([type, factor]) => `${factor}×${type}`)
+                                    .join(" + ") || "Formula"}
+                                </span>
+                              </div>
+                            ) : null}
+
+                            {!hasIO && !comp.ioSpecs?.isAutoCalc && (
                               <span className="text-slate-600">-</span>
                             )}
                           </td>
