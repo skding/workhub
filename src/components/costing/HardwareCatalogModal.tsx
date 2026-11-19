@@ -478,7 +478,14 @@ export default function HardwareCatalogModal({
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 text-slate-300">
                     {filteredComponents.map((comp) => {
-                      const hasIO = comp.ioSpecs && (comp.ioSpecs.DI || comp.ioSpecs.DO || comp.ioSpecs.AI || comp.ioSpecs.AO || comp.ioSpecs.HLI);
+                      const hasIO = comp.ioSpecs && (
+                        comp.ioSpecs.DI ||
+                        comp.ioSpecs.DO ||
+                        comp.ioSpecs.AI ||
+                        comp.ioSpecs.AO ||
+                        comp.ioSpecs.RTD ||
+                        comp.ioSpecs.HLI
+                      );
 
                       return (
                         <tr key={comp.id} className="hover:bg-slate-900/40 transition">
@@ -497,15 +504,40 @@ export default function HardwareCatalogModal({
                             </span>
                           </td>
 
-                          <td className="py-3 px-4 font-mono text-[11px] text-cyan-400">
+                          <td className="py-3 px-4 font-mono text-[11px]">
                             {hasIO ? (
-                              <span>
-                                {comp.ioSpecs.DI ? `DI:${comp.ioSpecs.DI} ` : ""}
-                                {comp.ioSpecs.DO ? `DO:${comp.ioSpecs.DO} ` : ""}
-                                {comp.ioSpecs.AI ? `AI:${comp.ioSpecs.AI} ` : ""}
-                                {comp.ioSpecs.AO ? `AO:${comp.ioSpecs.AO} ` : ""}
-                                {comp.ioSpecs.HLI ? `HLI:${comp.ioSpecs.HLI}` : ""}
-                              </span>
+                              <div className="flex flex-wrap gap-1">
+                                {Boolean(comp.ioSpecs.DI) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800/50 text-cyan-300 text-[10px]">
+                                    DI:{comp.ioSpecs.DI}
+                                  </span>
+                                )}
+                                {Boolean(comp.ioSpecs.DO) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800/50 text-cyan-300 text-[10px]">
+                                    DO:{comp.ioSpecs.DO}
+                                  </span>
+                                )}
+                                {Boolean(comp.ioSpecs.AI) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-950 border border-blue-800/50 text-blue-300 text-[10px]">
+                                    AI:{comp.ioSpecs.AI}
+                                  </span>
+                                )}
+                                {Boolean(comp.ioSpecs.AO) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-950 border border-blue-800/50 text-blue-300 text-[10px]">
+                                    AO:{comp.ioSpecs.AO}
+                                  </span>
+                                )}
+                                {Boolean(comp.ioSpecs.RTD) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-950 border border-amber-800/50 text-amber-300 text-[10px]">
+                                    RTD:{comp.ioSpecs.RTD}
+                                  </span>
+                                )}
+                                {Boolean(comp.ioSpecs.HLI) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-950 border border-purple-800/50 text-purple-300 text-[10px]">
+                                    HLI:{comp.ioSpecs.HLI}
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <span className="text-slate-600">-</span>
                             )}
