@@ -130,8 +130,16 @@ curl -I http://127.0.0.1:3018/login
 
 Rclone provides a **Virtual On-Demand Filesystem (VFS)**. It does **not** download all 1TB of files to your server hard drive. It only streams files on-demand with a strict 1GB local cache.
 
-### 3.1 Install Rclone
+### 3.1 Install Rclone & FUSE3
 ```bash
+# Install FUSE3 (required by Rclone mount)
+# For Ubuntu / Debian:
+sudo apt-get update && sudo apt-get install -y fuse3
+
+# (Or if using Oracle Linux / RHEL):
+# sudo dnf install -y fuse3 fuse
+
+# Install Rclone
 sudo -v ; curl https://rclone.org/install.sh | sudo bash
 ```
 
@@ -204,7 +212,7 @@ ExecStart=/usr/bin/rclone mount onedrive: /mnt/onedrive \
   --buffer-size 16M \
   --dir-cache-time 30s \
   --umask 002
-ExecStop=/bin/fusermount -u -z /mnt/onedrive
+ExecStop=/usr/bin/fusermount3 -u -z /mnt/onedrive
 Restart=always
 RestartSec=10
 
