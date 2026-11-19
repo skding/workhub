@@ -1,97 +1,53 @@
 # WorkHub — Oracle Cloud Infrastructure (OCI) Deployment Guide
 
-This guide walks you through deploying **WorkHub** on an **Oracle Cloud Ubuntu Compute Instance** with:
-1. **GitHub Deploy Key** (securely cloning your private repository)
-2. **Node.js, Prisma, and PM2** (running WorkHub 24/7)
-3. **Rclone Virtual Mount** (zero-disk-waste on-demand sync with your 1TB Personal Microsoft 365 OneDrive)
-4. **Nginx Reverse Proxy with HTTPS** (Free Let's Encrypt SSL certificate)
+This guide is tailored for your existing Oracle Cloud environment where:
+* **Nginx and Certbot (SSL) are already installed and active.**
+* **Ports 80 & 443 are already open.**
+* **Other services are running on ports 3010 & 3011 with existing HTTPS configs.**
+* **WorkHub will run on Port 3018 (or above) without interfering with existing apps.**
 
 ---
 
 ## Architecture Overview
 
 ```
-Internet (HTTPS :443)
-       │
-       ▼
- [ Nginx Reverse Proxy & SSL ]
-       │
-       ├──► Proxy localhost:3000 ──► [ WorkHub Next.js Node Process (PM2) ]
-       │                                     │
-       │                                     ├──► Local SQLite DB (dev.db)
-       │                                     └──► /mnt/onedrive (ONEDRIVE_ROOT_PATH)
-       │                                                 │
-       ▼                                                 ▼
-[ Microsoft 365 1TB Cloud ] <═════════════════ [ Rclone VFS Mount Daemon ]
- (Drawings, Photos, Quotes)                     (Streams on-demand, max 1GB cache)
+                          Internet (HTTPS :443)
+                                    │
+                                    ▼
+                [ Existing Nginx Reverse Proxy with SSL ]
+                                    │
+    ┌───────────────────────────────┼───────────────────────────────┐
+    │                               │                               │
+    ▼                               ▼                               ▼
+Existing App 1                  Existing App 2                  WorkHub Daily Ops
+(Port 3010)                     (Port 3011)                     (Port 3018 via PM2)
+                                                                        │
+                                                                        ├──► Local SQLite DB (dev.db)
+                                                                        └──► /mnt/onedrive (ONEDRIVE_ROOT_PATH)
+                                                                                    │
+[ Microsoft 365 1TB Cloud ] <════════════════════════════════════════════════ [ Rclone VFS Mount Daemon ]
+ (Drawings, Photos, Quotes)                                                    (Streams on-demand, max 1GB cache)
 ```
 
 ---
 
-## Step 1: Oracle Cloud Firewall & Network Configuration
-
-Oracle Cloud requires opening ports in **both** the OCI Web Console and the Ubuntu virtual machine firewall.
-
-### 1.1 In OCI Web Console
-1. Navigate to **Networking** ➔ **Virtual Cloud Networks (VCN)**.
-2. Click your VCN ➔ Click **Security Lists** ➔ Click **Default Security List for...**.
-3. Under **Ingress Rules**, click **Add Ingress Rules**:
-   * **Source CIDR:** `0.0.0.0/0`
-   * **IP Protocol:** `TCP`
-   * **Destination Port Range:** `80, 443`
-   * **Description:** `HTTP and HTTPS for WorkHub`
-4. Click **Add Ingress Rules**.
-
-### 1.2 In the Ubuntu Server Terminal (Crucial for Oracle Cloud)
-Oracle Cloud Ubuntu images include strict default `iptables` rules. Run these commands to open ports 80 and 443:
-
-```bash
-# Allow HTTP (80) and HTTPS (443)
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
-
-# Save iptables rules so they persist across server reboots
-sudo apt update && sudo apt install -y iptables-persistent
-sudo netfilter-persistent save
-sudo netfilter-persistent reload
-```
-
----
-
-## Step 2: Install Node.js 22 LTS & PM2
-
-```bash
-# Install Node.js 22 LTS via NodeSource
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs git build-essential
-
-# Verify versions
-node -v   # Should be v22.x
-npm -v
-
-# Install PM2 globally to keep the app running forever
-sudo npm install -g pm2
-```
-
----
-
-## Step 3: Clone Your Private GitHub Repository
+## Step 1: Clone Your Private GitHub Repository
 
 Because your repository `https://github.com/skding/workhub` is **Private**, use a **Deploy Key** (read-only SSH key):
 
-### 3.1 Generate SSH Key on your Server
+### 1.1 Generate SSH Key on your Server (if you don't already have one)
 ```bash
 ssh-keygen -t ed25519 -C "workhub-oci-server"
 # Press Enter 3 times to accept default path and empty passphrase
 ```
 
-### 3.2 Display the Public Key
+### 1.2 Display the Public Key
 ```bash
 cat ~/.ssh/id_ed25519.pub
 ```
-*Copy the displayed output (starts with `ssh-ed25519 ...`).*
+*Copy the displayed text (starts with `ssh-ed25519 ...`).*
 
-### 3.3 Add to GitHub
+### 1.3 Add to GitHub
 1. Open your repo on GitHub: [https://github.com/skding/workhub](https://github.com/skding/workhub)
 2. Go to **Settings** ➔ **Deploy keys** (in the left sidebar).
 3. Click **Add deploy key**:
@@ -100,7 +56,7 @@ cat ~/.ssh/id_ed25519.pub
    * Leave "Allow write access" **unchecked** (read-only is safer).
 4. Click **Add key**.
 
-### 3.4 Clone WorkHub
+### 1.4 Clone WorkHub into `/var/www`
 ```bash
 sudo mkdir -p /var/www
 sudo chown -R $USER:$USER /var/www
@@ -112,27 +68,27 @@ cd workhub
 
 ---
 
-## Step 4: Configure Environment & Build WorkHub
+## Step 2: Configure Environment & Run WorkHub on Port 3018
 
-### 4.1 Create Environment File
+### 2.1 Create `.env` file
 ```bash
 nano .env
 ```
-Paste the following:
+Paste the following (configured for **Port 3018**):
 ```env
 # Application Environment
 NODE_ENV=production
-PORT=3000
+PORT=3018
 
-# Security key for JWT session tokens (generate a random 32+ character string)
-JWT_SECRET=workhub_oci_production_super_secret_pnc_key_2026_secure
+# Security key for JWT session tokens (generate any random 32+ character string)
+JWT_SECRET=workhub_pnc_secret_key_oracle_cloud_2026_super_secure
 
 # Point WorkHub to Rclone's OneDrive Mount Point
 ONEDRIVE_ROOT_PATH=/mnt/onedrive
 ```
 *(Press `Ctrl + O` then `Enter` to save, and `Ctrl + X` to exit).*
 
-### 4.2 Install Dependencies & Seed Database
+### 2.2 Install Dependencies & Build WorkHub
 ```bash
 npm install
 
@@ -143,48 +99,47 @@ npx prisma db push
 # Seed master components and hardware packages
 npx tsx prisma/seed-components.ts
 
-# (Optional) Seed sample admin account & test clients:
+# (Optional) Seed sample admin account & test clients if starting fresh:
 # npx tsx prisma/seed.ts
 
 # Build Next.js production bundle
 npm run build
 ```
 
-### 4.3 Start with PM2
+### 2.3 Start WorkHub on Port 3018 with PM2
 ```bash
-pm2 start npm --name "workhub" -- start -- -p 3000
+# Start on port 3018 alongside your 3010 and 3011 apps
+pm2 start npm --name "workhub" -- start -- -p 3018
 
-# Configure PM2 to start automatically on system reboot
-pm2 startup
-# (Run the command PM2 prints on your terminal)
+# Save PM2 process list so it starts automatically on reboot
 pm2 save
 ```
 
-Verify that WorkHub is running locally on port 3000:
+Verify that WorkHub is running locally on port 3018:
 ```bash
-curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1:3018/login
 # Should return HTTP/1.1 200 OK
 ```
 
 ---
 
-## Step 5: Install & Configure Rclone for 1TB Microsoft 365 OneDrive
+## Step 3: Install & Configure Rclone for Your 1TB OneDrive
 
 Rclone provides a **Virtual On-Demand Filesystem (VFS)**. It does **not** download all 1TB of files to your server hard drive. It only streams files on-demand with a strict 1GB local cache.
 
-### 5.1 Install Rclone
+### 3.1 Install Rclone
 ```bash
 sudo -v ; curl https://rclone.org/install.sh | sudo bash
 ```
 
-### 5.2 Create the Mount Directory
+### 3.2 Create the Mount Directory
 ```bash
 sudo mkdir -p /mnt/onedrive
 sudo chown -R $USER:$USER /mnt/onedrive
 ```
 
-### 5.3 Authorize Your Personal Microsoft 365 Account
-Because your cloud server does not have a web browser, use Rclone's standard headless authentication:
+### 3.3 Authorize Your Personal Microsoft 365 Account
+Because your cloud server does not have a web browser, use Rclone's headless authorization:
 
 1. **On your local PC (Windows)**:
    * Open PowerShell and run:
@@ -220,8 +175,8 @@ Because your cloud server does not have a web browser, use Rclone's standard hea
    # Should list your OneDrive folders (e.g. WorkHub, Documents, etc.)
    ```
 
-### 5.4 Configure Rclone Auto-Mount as a Systemd Service
-Create a background service so OneDrive stays mounted permanently:
+### 3.4 Configure Rclone Auto-Mount as a Systemd Service
+Create a background service so OneDrive stays mounted permanently across reboots:
 
 ```bash
 sudo nano /etc/systemd/system/rclone-onedrive.service
@@ -271,97 +226,128 @@ ls -l /mnt/onedrive
 
 ---
 
-## Step 6: Configure Nginx & Free SSL (HTTPS)
+## Step 4: Configure Existing Nginx for WorkHub & HTTPS
 
-### 6.1 Install Nginx
+Since you **already have Nginx running** with apps on port 3010 and 3011, **do NOT delete your existing configs**. 
+
+You have two clean options to add WorkHub:
+
+---
+
+### Option A: Subdomain (Recommended — e.g. `workhub.yourdomain.com`)
+This gives WorkHub its own dedicated URL and SSL certificate without touching your existing apps on 3010/3011.
+
+1. Add a **DNS A Record** in your domain registrar:
+   * **Host / Name:** `workhub` (or `ops`)
+   * **Points to:** Your Oracle Cloud Public IP
+
+2. Create a new site config in Nginx:
+   ```bash
+   sudo nano /etc/nginx/sites-available/workhub.conf
+   ```
+
+   Paste the following:
+   ```nginx
+   server {
+       listen 80;
+       server_name workhub.yourdomain.com; # Replace with your subdomain
+
+       client_max_body_size 100M; # For large CAD drawings and site photos
+
+       location / {
+           proxy_pass http://127.0.0.1:3018;
+           proxy_http_version 1.1;
+
+           # WebSocket support
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+
+           # Proxy headers
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+
+           # Timeouts for large uploads
+           proxy_connect_timeout 120s;
+           proxy_send_timeout 120s;
+           proxy_read_timeout 120s;
+       }
+   }
+   ```
+
+3. Enable the site and test configuration:
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/workhub.conf /etc/nginx/sites-enabled/
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+
+4. Issue free SSL certificate using Certbot:
+   ```bash
+   sudo certbot --nginx -d workhub.yourdomain.com
+   ```
+   *Certbot will automatically add the SSL certificates and configure HTTPS redirects without affecting your 3010/3011 apps.*
+
+---
+
+### Option B: Subpath on Existing Domain (e.g. `https://yourdomain.com/workhub`)
+If you prefer not to create a new subdomain and want WorkHub accessible on your existing domain under `/workhub/`:
+
+Edit your existing Nginx config (the one handling 3010/3011):
 ```bash
-sudo apt install -y nginx
+sudo nano /etc/nginx/sites-available/your-existing-config
 ```
 
-### 6.2 Create Nginx Configuration
-Replace `workhub.yourdomain.com` with your domain (or server public IP):
+Inside the existing `server { ... }` block that already has SSL configured, add this location block:
 
-```bash
-sudo nano /etc/nginx/sites-available/workhub
-```
-
-Paste the following configuration:
 ```nginx
-server {
-    listen 80;
-    server_name workhub.yourdomain.com; # Replace with your domain or Public IP
-
-    # Allow large uploads for CAD files, high-res photos, and drawings (up to 100MB)
-    client_max_body_size 100M;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
+    # Route for WorkHub on Port 3018
+    location /workhub/ {
+        proxy_pass http://127.0.0.1:3018/;
         proxy_http_version 1.1;
-
-        # WebSocket / HMR support
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-
-        # Standard proxy headers
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Timeouts for large file transfers
-        proxy_connect_timeout 120s;
-        proxy_send_timeout 120s;
-        proxy_read_timeout 120s;
+        client_max_body_size 100M;
     }
-}
 ```
 
-Enable the configuration and reload Nginx:
+Test and reload Nginx:
 ```bash
-# Remove default Nginx welcome page
-sudo rm -f /etc/nginx/sites-enabled/default
-
-# Enable workhub
-sudo ln -s /etc/nginx/sites-available/workhub /etc/nginx/sites-enabled/
 sudo nginx -t
-sudo systemctl restart nginx
+sudo systemctl reload nginx
 ```
 
 ---
 
-## Step 7: Enable HTTPS with Free Let's Encrypt SSL
+## Step 5: Updating & Maintenance
 
-1. Ensure your domain's **DNS A Record** points to your **Oracle Cloud Instance Public IP**.
-2. Install Certbot and obtain the SSL certificate:
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d workhub.yourdomain.com
-```
-
-Certbot will automatically modify your Nginx configuration, install the SSL certificate, and set up automatic renewal via systemd timer.
-
----
-
-## Step 8: Useful Maintenance Commands
+Whenever you push new updates from your development machine to GitHub, update your cloud instance with:
 
 ```bash
-# Check WorkHub application logs
-pm2 logs workhub
-
-# Restart WorkHub after pulling updates from git
 cd /var/www/workhub
-git pull
+git pull origin main
 npm install
 npx prisma generate
 npx prisma db push
 npm run build
 pm2 restart workhub
+```
 
-# Check Rclone OneDrive sync status
+### Useful Management Commands:
+```bash
+# Check status of all your apps (3010, 3011, and 3018)
+pm2 status
+
+# View WorkHub live logs
+pm2 logs workhub
+
+# Check Rclone 1TB OneDrive status
 sudo systemctl status rclone-onedrive
-
-# Test Nginx configuration and reload
-sudo nginx -t
-sudo systemctl reload nginx
+ls -l /mnt/onedrive/WorkHub
 ```
