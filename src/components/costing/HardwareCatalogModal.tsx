@@ -1,0 +1,613 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import {
+  X,
+  Search,
+  Plus,
+  Trash2,
+  Edit2,
+  Package,
+  Cpu,
+  Layers,
+  Check,
+  AlertCircle,
+  Tag,
+  Boxes,
+  DollarSign
+} from "lucide-react";
+import { formatNumber } from "@/lib/format";
+
+interface CatalogComponent {
+  id: string;
+  model: string;
+  brand: string;
+  description: string;
+  listPrice: number;
+  category: string;
+  ioSpecs: any;
+}
+
+interface HardwarePackageItem {
+  id?: string;
+  catalogId: string;
+  quantity: number;
+  catalog?: CatalogComponent;
+}
+
+interface HardwarePackage {
+  id: string;
+  name: string;
+  description: string | null;
+  items: HardwarePackageItem[];
+}
+
+interface HardwareCatalogModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onComponentSelected?: (component: CatalogComponent) => void;
+}
+
+export default function HardwareCatalogModal({
+  isOpen,
+  onClose,
+  onComponentSelected,
+}: HardwareCatalogModalProps) {
+  const [activeTab, setActiveTab] = useState<"catalog" | "packages">("catalog");
+  const [components, setComponents] = useState<CatalogComponent[]>([]);
+  const [packages, setPackages] = useState<HardwarePackage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
+
+  // Form states
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [model, setModel] = useState("");
+  const [brand, setBrand] = useState("");
+  const [description, setDescription] = useState("");
+  const [listPrice, setListPrice] = useState(0);
+  const [category, setCategory] = useState("PLC");
+  const [ioDI, setIoDI] = useState(0);
+  const [ioDO, setIoDO] = useState(0);
+  const [ioAI, setIoAI] = useState(0);
+  const [ioAO, setIoAO] = useState(0);
+  const [ioRTD, setIoRTD] = useState(0);
+  const [ioHLI, setIoHLI] = useState(0);
+
+  // Package Form
+  const [showAddPkg, setShowAddPkg] = useState(false);
+  const [pkgName, setPkgName] = useState("");
+  const [pkgDesc, setPkgDesc] = useState("");
+  const [pkgItems, setPkgItems] = useState<{ catalogId: string; quantity: number }[]>([]);
+
+  const categories = ["All", "PLC", "HMI", "NETWORK", "SCADA", "HARDWARE", "SITE", "ENGINEERING"];
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [compRes, pkgRes] = await Promise.all([
+        fetch("/api/costing/components"),
+        fetch("/api/costing/packages"),
+      ]);
+      const compData = await compRes.json();
+      const pkgData = await pkgRes.json();
+
+      if (compData.success) setComponents(compData.data || []);
+      if (pkgData.success) setPackages(pkgData.data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchData();
+    }
+  }, [isOpen]);
+
+  const handleSaveComponent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!model || !brand) return;
+
+    try {
+      const ioSpecs = { DI: ioDI, DO: ioDO, AI: ioAI, AO: ioAO, RTD: ioRTD, HLI: ioHLI };
+      const payload = {
+        model: model.trim(),
+        brand: brand.trim(),
+        description: description.trim(),
+        listPrice: Number(listPrice) || 0,
+        category,
+        ioSpecs,
+      };
+
+      if (editingId) {
+        await fetch(`/api/costing/components/${editingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await fetch("/api/costing/components", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      setShowAddForm(false);
+      setEditingId(null);
+      resetForm();
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleStartEdit = (comp: CatalogComponent) => {
+    setEditingId(comp.id);
+    setModel(comp.model);
+    setBrand(comp.brand);
+    setDescription(comp.description);
+    setListPrice(comp.listPrice);
+    setCategory(comp.category);
+    setIoDI(comp.ioSpecs?.DI || 0);
+    setIoDO(comp.ioSpecs?.DO || 0);
+    setIoAI(comp.ioSpecs?.AI || 0);
+    setIoAO(comp.ioSpecs?.AO || 0);
+    setIoRTD(comp.ioSpecs?.RTD || 0);
+    setIoHLI(comp.ioSpecs?.HLI || 0);
+    setShowAddForm(true);
+  };
+
+  const handleDelete = async (id: string, modelName: string) => {
+    if (!confirm(`Are you sure you want to delete ${modelName}?`)) return;
+    try {
+      await fetch(`/api/costing/components/${id}`, { method: "DELETE" });
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const resetForm = () => {
+    setModel("");
+    setBrand("");
+    setDescription("");
+    setListPrice(0);
+    setCategory("PLC");
+    setIoDI(0);
+    setIoDO(0);
+    setIoAI(0);
+    setIoAO(0);
+    setIoRTD(0);
+    setIoHLI(0);
+  };
+
+  const filteredComponents = components.filter((c) => {
+    const matchesCat = selectedCategory === "All" || c.category === selectedCategory;
+    const matchesSearch =
+      c.model.toLowerCase().includes(search.toLowerCase()) ||
+      c.brand.toLowerCase().includes(search.toLowerCase()) ||
+      c.description.toLowerCase().includes(search.toLowerCase());
+    return matchesCat && matchesSearch;
+  });
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div
+        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-cyan-950 border border-cyan-800 text-cyan-400">
+              <Package className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-white">PLC & Automation Hardware Catalog</h2>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
+                  Master Pricing (RM)
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Manage standard automation parts, PLCs, HMIs, network switches, and 1-click starter bundles
+              </p>
+            </div>
+          </div>
+
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* View Switcher Tabs */}
+        <div className="px-6 pt-3 flex items-center gap-3 border-b border-slate-800 bg-slate-950/40 text-xs font-semibold">
+          <button
+            onClick={() => setActiveTab("catalog")}
+            className={`pb-3 px-2 border-b-2 transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "catalog" ? "border-cyan-500 text-cyan-400" : "border-transparent text-slate-400 hover:text-white"
+            }`}
+          >
+            <Cpu className="w-4 h-4" />
+            <span>Components ({components.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("packages")}
+            className={`pb-3 px-2 border-b-2 transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "packages" ? "border-cyan-500 text-cyan-400" : "border-transparent text-slate-400 hover:text-white"
+            }`}
+          >
+            <Boxes className="w-4 h-4" />
+            <span>1-Click Packages ({packages.length})</span>
+          </button>
+        </div>
+
+        {/* Content Body */}
+        <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          {activeTab === "catalog" ? (
+            <>
+              {/* Filter and Add Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search model, brand, or description..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    resetForm();
+                    setEditingId(null);
+                    setShowAddForm(!showAddForm);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ New Component</span>
+                </button>
+              </div>
+
+              {/* Category Pills */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                      selectedCategory === cat
+                        ? "bg-cyan-950 text-cyan-300 border border-cyan-800"
+                        : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {/* Add / Edit Form Drawer */}
+              {showAddForm && (
+                <form
+                  onSubmit={handleSaveComponent}
+                  className="p-4 rounded-xl bg-slate-950 border border-cyan-800/60 space-y-3"
+                >
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-bold text-cyan-400 uppercase tracking-wider">
+                    <span>{editingId ? "Edit Component" : "Register New Component"}</span>
+                    <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-white">
+                      Cancel
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-300 mb-1">Model Code *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. 6ES7214-1AG40-0XB0"
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-300 mb-1">Brand *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Siemens, Schneider, Omron"
+                        value={brand}
+                        onChange={(e) => setBrand(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-300 mb-1">Category</label>
+                      <select
+                        value={category}
+                        onChange={(e) => setCategory(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white"
+                      >
+                        {categories.filter((c) => c !== "All").map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-300 mb-1">List Price (RM) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="1850.00"
+                        value={listPrice}
+                        onChange={(e) => setListPrice(Number(e.target.value))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2 lg:col-span-4">
+                      <label className="block text-[10px] font-semibold text-slate-300 mb-1">Description</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. SIMATIC S7-1200 CPU 1214C DC/DC/DC with 14DI/10DO"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white"
+                      />
+                    </div>
+
+                    {/* IO Capabilities (for PLCs & IO Cards) */}
+                    <div className="sm:col-span-2 lg:col-span-4 p-2.5 rounded-lg bg-slate-900/60 border border-slate-800 space-y-1.5">
+                      <span className="text-[10px] font-mono uppercase text-slate-400">
+                        Integrated I/O Specs (if PLC or Remote IO Card)
+                      </span>
+                      <div className="grid grid-cols-6 gap-2">
+                        <div>
+                          <label className="block text-[10px] text-center text-slate-500 font-mono">DI</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={ioDI}
+                            onChange={(e) => setIoDI(Number(e.target.value))}
+                            className="w-full bg-slate-950 border border-slate-700 rounded text-center text-xs text-cyan-300 font-mono py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-center text-slate-500 font-mono">DO</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={ioDO}
+                            onChange={(e) => setIoDO(Number(e.target.value))}
+                            className="w-full bg-slate-950 border border-slate-700 rounded text-center text-xs text-cyan-300 font-mono py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-center text-slate-500 font-mono">AI</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={ioAI}
+                            onChange={(e) => setIoAI(Number(e.target.value))}
+                            className="w-full bg-slate-950 border border-slate-700 rounded text-center text-xs text-cyan-300 font-mono py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-center text-slate-500 font-mono">AO</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={ioAO}
+                            onChange={(e) => setIoAO(Number(e.target.value))}
+                            className="w-full bg-slate-950 border border-slate-700 rounded text-center text-xs text-cyan-300 font-mono py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-center text-slate-500 font-mono">RTD</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={ioRTD}
+                            onChange={(e) => setIoRTD(Number(e.target.value))}
+                            className="w-full bg-slate-950 border border-slate-700 rounded text-center text-xs text-cyan-300 font-mono py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-center text-slate-500 font-mono">HLI</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={ioHLI}
+                            onChange={(e) => setIoHLI(Number(e.target.value))}
+                            className="w-full bg-slate-950 border border-slate-700 rounded text-center text-xs text-cyan-300 font-mono py-1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddForm(false)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold"
+                    >
+                      {editingId ? "Save Changes" : "Create Component"}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Components Table */}
+              <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/60 shadow">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900/90 text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-800">
+                    <tr>
+                      <th className="py-3 px-4">Model & Description</th>
+                      <th className="py-3 px-4">Brand</th>
+                      <th className="py-3 px-4">Category</th>
+                      <th className="py-3 px-4">IO Specs</th>
+                      <th className="py-3 px-4 text-right">List Price (RM)</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                    {filteredComponents.map((comp) => {
+                      const hasIO = comp.ioSpecs && (comp.ioSpecs.DI || comp.ioSpecs.DO || comp.ioSpecs.AI || comp.ioSpecs.AO || comp.ioSpecs.HLI);
+
+                      return (
+                        <tr key={comp.id} className="hover:bg-slate-900/40 transition">
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-white font-mono">{comp.model}</div>
+                            <div className="text-[11px] text-slate-400">{comp.description}</div>
+                          </td>
+
+                          <td className="py-3 px-4 font-semibold text-slate-200">
+                            {comp.brand}
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 font-mono">
+                              {comp.category}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 font-mono text-[11px] text-cyan-400">
+                            {hasIO ? (
+                              <span>
+                                {comp.ioSpecs.DI ? `DI:${comp.ioSpecs.DI} ` : ""}
+                                {comp.ioSpecs.DO ? `DO:${comp.ioSpecs.DO} ` : ""}
+                                {comp.ioSpecs.AI ? `AI:${comp.ioSpecs.AI} ` : ""}
+                                {comp.ioSpecs.AO ? `AO:${comp.ioSpecs.AO} ` : ""}
+                                {comp.ioSpecs.HLI ? `HLI:${comp.ioSpecs.HLI}` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-slate-600">-</span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-right font-mono font-bold text-white">
+                            RM {formatNumber(comp.listPrice)}
+                          </td>
+
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => handleStartEdit(comp)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                                title="Edit"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(comp.id, comp.model)}
+                                className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 transition cursor-pointer"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {filteredComponents.length === 0 && !loading && (
+                      <tr>
+                        <td colSpan={6} className="py-10 text-center text-slate-500">
+                          No matching components found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            /* PACKAGES TAB */
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-mono">
+                  Standard automation kits for 1-click insertion into project BOMs
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {packages.map((pkg) => {
+                  const pkgTotal = pkg.items.reduce(
+                    (acc, item) => acc + (item.catalog?.listPrice || 0) * item.quantity,
+                    0
+                  );
+
+                  return (
+                    <div
+                      key={pkg.id}
+                      className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3 shadow"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-sm text-cyan-300">{pkg.name}</div>
+                        <span className="text-xs font-mono font-bold text-white">
+                          RM {formatNumber(pkgTotal)}
+                        </span>
+                      </div>
+
+                      {pkg.description && (
+                        <p className="text-xs text-slate-400">{pkg.description}</p>
+                      )}
+
+                      <div className="space-y-1.5 pt-2 border-t border-slate-800/80 text-xs font-mono">
+                        {pkg.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-slate-300">
+                            <span>
+                              {item.quantity}x [{item.catalog?.brand}] {item.catalog?.model}
+                            </span>
+                            <span className="text-slate-500">
+                              RM {formatNumber((item.catalog?.listPrice || 0) * item.quantity)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-xs text-slate-500">
+          <span>All hardware prices quoted in Malaysian Ringgit (RM)</span>
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

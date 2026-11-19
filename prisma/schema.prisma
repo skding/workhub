@@ -1,0 +1,269 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Integration {
+  id           String    @id @default("onedrive")
+  provider     String    @unique @default("onedrive")
+  connected    Boolean   @default(false)
+  accountEmail String?
+  accountName  String?
+  accessToken  String?
+  refreshToken String?
+  tokenExpires DateTime?
+  rootFolderId String?   // ID of /WorkHub in OneDrive
+  updatedAt    DateTime  @updatedAt
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("ADMIN") // ADMIN, ENGINEER, VIEWER
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Client {
+  id              String           @id @default(cuid())
+  companyName     String           @unique // e.g. "Mega Foods Packaging"
+  clientCode      String?          @unique // e.g. "CL-MFP"
+  contactPerson   String?
+  contactPhone    String?          // WhatsApp / Phone
+  contactEmail    String?
+  industry        String?          // e.g. "Food & Beverage", "Electronics", "Automotive"
+  address         String?
+  notes           String?
+  enquiries       Enquiry[]
+  costingVersions CostingVersion[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Enquiry {
+  id              String           @id @default(cuid())
+  code            String           @unique // e.g. ENQ-202611-001
+  title           String           // e.g. Assembly Sorting Conveyor
+  clientId        String?
+  client          Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientName      String           // e.g. Acme Automation (also used for folder naming)
+  contactPerson   String?
+  contactPhone    String?          // WhatsApp / Phone
+  contactEmail    String?
+  status          String           @default("NEW") // NEW, CONCEPT_DESIGN, COSTING, QUOTED, WON, LOST
+  priority        String           @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  folderName      String           // e.g. 202611-001_AcmeAutomation_AssemblySortingConveyor
+  oneDriveFolderId String?         // Microsoft Graph item ID
+  oneDriveWebUrl   String?         // Direct browser link to OneDrive folder
+  estimatedBudget Float?
+  targetDate      DateTime?
+  summary         String?          // High level client enquiry description
+  
+  notes           Note[]
+  revisions       Revision[]
+  files           FileAttachment[]
+  todos           TodoItem[]
+  costingVersions CostingVersion[]
+  
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  enquiryId String
+  enquiry   Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  type      String   @default("GENERAL") // WHATSAPP, CALL, REQUIREMENT, GENERAL
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Revision {
+  id          String   @id @default(cuid())
+  enquiryId   String
+  enquiry     Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  revCode     String   // e.g. Rev A, Rev 1.0, Rev B
+  type        String   @default("COSTING") // COSTING, DESIGN, COMBINED
+  summary     String   // e.g. "Changed to 32 I/O PLC, added 2 safety curtains"
+  totalAmount Float?
+  dataJson    String?  // JSON snapshot of PLC costing / BOM items
+  createdAt   DateTime @default(now())
+}
+
+model FileAttachment {
+  id        String   @id @default(cuid())
+  enquiryId String
+  enquiry   Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  category  String   @default("INPUT") // INPUT, DESIGN, COSTING
+  fileName  String
+  fileType  String   // image, pdf, cad, excel, other
+  fileSize  Int?
+  fileUrl   String?  // Local data URL, local path, or future OneDrive webUrl
+  oneDriveId String? // ID in OneDrive if synced
+  source    String   @default("LOCAL") // LOCAL, ONEDRIVE, WHATSAPP
+  createdAt DateTime @default(now())
+}
+
+model TodoItem {
+  id        String    @id @default(cuid())
+  enquiryId String
+  enquiry   Enquiry   @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  task      String
+  completed Boolean   @default(false)
+  dueDate   DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// ==========================================
+// AUTOMATION & PLC COSTING CALCULATOR MODELS
+// ==========================================
+
+model CostingVersion {
+  id             String             @id @default(cuid())
+  versionNumber  Int
+  status         String             @default("DRAFT") // DRAFT, SUBMITTED, APPROVED, ARCHIVED
+  totalCost      Float              @default(0) // Net Cost in RM
+  totalSelling   Float              @default(0) // Selling Price in RM
+  markup         Float              @default(1.0)
+  markupSiteWork Float              @default(1.0)
+  
+  enquiryId      String?
+  enquiry        Enquiry?           @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  clientId       String?
+  client         Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  projectName    String?            // Custom title or fallback to enquiry.title
+  
+  costSettings   CostSettings?
+  systems        CostingSystem[]
+  components     CostingComponent[]
+  
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+}
+
+model CostingSystem {
+  id               String             @id @default(cuid())
+  name             String
+  versionId        String
+  version          CostingVersion     @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  sections         CostingSection[]
+  components       CostingComponent[]
+  
+  // Site work costs (RM)
+  mandays          Float              @default(0)
+  mobilization     Float              @default(0)
+  lodging          Float              @default(0)
+  documentation    Float              @default(0)
+  training         Float              @default(0)
+  siteWorkDetails  String?            // JSON string
+}
+
+model CostingSection {
+  id               String             @id @default(cuid())
+  name             String
+  systemId         String
+  system           CostingSystem      @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  ioRequirements   CostingIO[]
+  equipment        CostingEquipment[]
+  components       CostingComponent[]
+
+  // Site work costs (RM)
+  mandays          Float              @default(0)
+  mobilization     Float              @default(0)
+  lodging          Float              @default(0)
+  documentation    Float              @default(0)
+  training         Float              @default(0)
+  siteWorkDetails  String?            // JSON string
+}
+
+model CostingEquipment {
+  id        String               @id @default(cuid())
+  name      String
+  quantity  Int                  @default(1)
+  sectionId String
+  section   CostingSection       @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  io        CostingEquipmentIO[]
+}
+
+model CostingEquipmentIO {
+  id          String           @id @default(cuid())
+  ioType      String           // DI, DO, AI, AO, RTD, HLI
+  quantity    Int
+  equipmentId String
+  equipment   CostingEquipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+}
+
+model CostingIO {
+  id        String         @id @default(cuid())
+  ioType    String         // DI, DO, AI, AO, RTD, HLI
+  quantity  Int
+  sectionId String
+  section   CostingSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+}
+
+model ComponentCatalog {
+  id           String                @id @default(cuid())
+  model        String                @unique
+  description  String
+  brand        String
+  listPrice    Float                 @default(0) // RM
+  category     String                @default("PLC") // PLC, HMI, NETWORK, SCADA, SITE, HARDWARE, ENGINEERING
+  ioSpecs      String?               // JSON string: { DI, DO, AI, AO, RTD, HLI, isAutoCalc, ioFactors }
+  components   CostingComponent[]
+  packageItems HardwarePackageItem[]
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+}
+
+model CostingComponent {
+  id               String            @id @default(cuid())
+  versionId        String
+  version          CostingVersion    @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  catalogId        String?
+  catalog          ComponentCatalog? @relation(fields: [catalogId], references: [id], onDelete: SetNull)
+  quantity         Int               @default(1)
+  snapshottedPrice Float             @default(0) // RM
+  componentName    String?
+  category         String?
+  
+  // Hierarchical links
+  systemId         String?
+  system           CostingSystem?    @relation(fields: [systemId], references: [id], onDelete: SetNull)
+  sectionId        String?
+  section          CostingSection?   @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+}
+
+model CostSettings {
+  id               String         @id @default(cuid())
+  versionId        String         @unique
+  version          CostingVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  engRateDigital   Float          @default(80) // RM per point
+  engRateAnalog    Float          @default(150)
+  engRateHLI       Float          @default(300)
+  cablingCostPerIO Float          @default(50)
+  siteWorkRates    String?        // JSON string
+}
+
+model HardwarePackage {
+  id          String                @id @default(cuid())
+  name        String                @unique
+  description String?
+  items       HardwarePackageItem[]
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+}
+
+model HardwarePackageItem {
+  id        String           @id @default(cuid())
+  packageId String
+  package   HardwarePackage  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  catalogId String
+  catalog   ComponentCatalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  quantity  Int              @default(1)
+}
