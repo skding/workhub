@@ -80,6 +80,9 @@ Paste the following (configured for **Port 3018**):
 NODE_ENV=production
 PORT=3018
 
+# SQLite Database
+DATABASE_URL="file:./dev.db"
+
 # Security key for JWT session tokens (generate any random 32+ character string)
 JWT_SECRET=workhub_pnc_secret_key_oracle_cloud_2026_super_secure
 
